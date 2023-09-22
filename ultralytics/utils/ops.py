@@ -79,7 +79,7 @@ def segment2box(segment, width=640, height=640):
         4, dtype=segment.dtype)  # xyxy
 
 
-def scale_boxes(img1_shape, boxes, img0_shape, ratio_pad=None, padding=True):
+def scale_boxes(img1_shape, boxes, var_boxes, img0_shape, ratio_pad=None, padding=True):
     """
     Rescales bounding boxes (in the format of xyxy) from the shape of the image they were originally specified in
     (img1_shape) to the shape of a different image (img0_shape).
@@ -108,8 +108,9 @@ def scale_boxes(img1_shape, boxes, img0_shape, ratio_pad=None, padding=True):
         boxes[..., [0, 2]] -= pad[0]  # x padding
         boxes[..., [1, 3]] -= pad[1]  # y padding
     boxes[..., :4] /= gain
+    var_boxes /= gain ** 2
     clip_boxes(boxes, img0_shape)
-    return boxes
+    return boxes, var_boxes
 
 
 def make_divisible(x, divisor):
@@ -127,6 +128,84 @@ def make_divisible(x, divisor):
         divisor = int(divisor.max())  # to int
     return math.ceil(x / divisor) * divisor
 
+def var_boxes(boxes, idx_same_class_as_i):
+    x1 = boxes[idx_same_class_as_i,0]
+    y1 = boxes[idx_same_class_as_i,1]
+    x2 = boxes[idx_same_class_as_i,2]
+    y2 = boxes[idx_same_class_as_i,3]
+    # Get variances of boxes and scores
+    var_x = torch.var(0.5*(x1 + x2), unbiased=True)
+    var_y = torch.var(0.5*(y1 + y2), unbiased=True)
+    var_w = torch.var(x2 - x1, unbiased=True)
+    var_h = torch.var(y2 - y1, unbiased=True)
+    variances = torch.stack((var_x, var_y, var_w, var_h),-1)
+    return torch.zeros(4) if variances.isnan().all() else variances 
+
+# Adapted from: https://github.com/DayBreak-u/RefinedetLite.pytorch/blob/master/layers/box_utils.py
+def custom_nms(boxes, scores, classes, overlap=0.5):
+    """ Perform nms while computing box variances"""
+    
+    keep = -torch.ones_like(scores).long()
+    var_keep = -1 + torch.zeros(boxes.size(0), 4)
+    det_cls = classes.int()
+
+    if boxes.numel() == 0:
+        return keep
+    
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 2]
+    y2 = boxes[:, 3]
+    
+    area = torch.mul(x2 - x1, y2 - y1)
+    _, idx = scores.sort(0)  # sort in ascending order
+
+    xx1 = boxes.new()
+    yy1 = boxes.new()
+    xx2 = boxes.new()
+    yy2 = boxes.new()
+    w = boxes.new()
+    h = boxes.new()
+
+    count = 0
+    while idx.numel() > 0:
+        i = idx[-1]  # index of current largest val
+        keep[count] = i
+        count += 1
+        if idx.size(0) == 1:
+            var_keep[count-1] = torch.zeros(4)
+            break
+        idx = idx[:-1]  # remove kept element from view
+        # load bboxes of next highest vals
+        torch.index_select(x1, 0, idx, out=xx1)
+        torch.index_select(y1, 0, idx, out=yy1)
+        torch.index_select(x2, 0, idx, out=xx2)
+        torch.index_select(y2, 0, idx, out=yy2)
+        # store element-wise max with next highest score
+        xx1 = torch.clamp(xx1, min=x1[i])
+        yy1 = torch.clamp(yy1, min=y1[i])
+        xx2 = torch.clamp(xx2, max=x2[i])
+        yy2 = torch.clamp(yy2, max=y2[i])
+        w.resize_as_(xx2)
+        h.resize_as_(yy2)
+        w = xx2 - xx1
+        h = yy2 - yy1
+        # check sizes of xx1 and xx2.. after each iteration
+        w = torch.clamp(w, min=0.0)
+        h = torch.clamp(h, min=0.0)
+        inter = w*h
+        # IoU = i / (area(a) + area(b) - i)
+        rem_areas = torch.index_select(area, 0, idx)  # load remaining areas)
+        union = (rem_areas - inter) + area[i]
+        IoU = inter/union  # store result in iou
+        # get uncertainties
+        idx_high_overlap_with_i = idx[IoU.ge(overlap)]
+        same_cls = (det_cls[i] == det_cls[idx_high_overlap_with_i]).squeeze()
+        var_keep[count-1] = var_boxes(boxes, idx_high_overlap_with_i[same_cls])
+        # keep only elements with an IoU <= overlap
+        idx = idx[IoU.le(overlap)]
+
+    return keep[keep >= 0], var_keep[var_keep >= 0].view(-1,4)
 
 def non_max_suppression(
         prediction,
@@ -198,6 +277,7 @@ def non_max_suppression(
 
     t = time.time()
     output = [torch.zeros((0, 6 + nm), device=prediction.device)] * bs
+    var_output = [torch.zeros((0, 4), device=prediction.device)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
         # Apply constraints
         # x[((x[:, 2:4] < min_wh) | (x[:, 2:4] > max_wh)).any(1), 4] = 0  # width-height
@@ -239,8 +319,10 @@ def non_max_suppression(
         # Batched NMS
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
-        i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
+        # i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
+        i, vars_xi = custom_nms(boxes, scores, c, iou_thres)  # NMS CUSTOM!!
         i = i[:max_det]  # limit detections
+        vars_xi = vars_xi[:max_det]
 
         # # Experimental
         # merge = False  # use merge-NMS
@@ -255,13 +337,14 @@ def non_max_suppression(
         #         i = i[iou.sum(1) > 1]  # require redundancy
 
         output[xi] = x[i]
+        var_output[xi] = vars_xi
         if mps:
             output[xi] = output[xi].to(device)
         if (time.time() - t) > time_limit:
             LOGGER.warning(f'WARNING ⚠️ NMS time limit {time_limit:.3f}s exceeded')
             break  # time limit exceeded
 
-    return output
+    return output, var_output
 
 
 def clip_boxes(boxes, shape):

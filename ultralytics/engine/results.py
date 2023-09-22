@@ -89,10 +89,11 @@ class Results(SimpleClass):
         _keys (tuple): A tuple of attribute names for non-empty attributes.
     """
 
-    def __init__(self, orig_img, path, names, boxes=None, masks=None, probs=None, keypoints=None) -> None:
+    def __init__(self, orig_img, path, names, boxes=None, var_boxes=None, masks=None, probs=None, keypoints=None) -> None:
         """Initialize the Results class."""
         self.orig_img = orig_img
         self.orig_shape = orig_img.shape[:2]
+        self.var_boxes = var_boxes
         self.boxes = Boxes(boxes, self.orig_shape) if boxes is not None else None  # native size boxes
         self.masks = Masks(masks, self.orig_shape) if masks is not None else None  # native size or imgsz masks
         self.probs = Probs(probs) if probs is not None else None
@@ -101,7 +102,7 @@ class Results(SimpleClass):
         self.names = names
         self.path = path
         self.save_dir = None
-        self._keys = 'boxes', 'masks', 'probs', 'keypoints'
+        self._keys = 'boxes', 'var_boxes', 'masks', 'probs', 'keypoints'
 
     def __getitem__(self, idx):
         """Return a Results object for the specified index."""
@@ -153,20 +154,20 @@ class Results(SimpleClass):
         return Results(orig_img=self.orig_img, path=self.path, names=self.names)
 
     def plot(
-        self,
-        conf=True,
-        line_width=None,
-        font_size=None,
-        font='Arial.ttf',
-        pil=False,
-        img=None,
-        im_gpu=None,
-        kpt_radius=5,
-        kpt_line=True,
-        labels=True,
-        boxes=True,
-        masks=True,
-        probs=True,
+            self,
+            conf=True,
+            line_width=None,
+            font_size=None,
+            font='Arial.ttf',
+            pil=False,
+            img=None,
+            im_gpu=None,
+            kpt_radius=5,
+            kpt_line=True,
+            labels=True,
+            boxes=True,
+            masks=True,
+            probs=True,
     ):
         """
         Plots the detection results on an input RGB image. Accepts a numpy array (cv2) or a PIL Image.
@@ -205,7 +206,7 @@ class Results(SimpleClass):
         """
         if img is None and isinstance(self.orig_img, torch.Tensor):
             img = (self.orig_img[0].detach().permute(1, 2, 0).contiguous() * 255).to(torch.uint8).cpu().numpy()
-
+       
         names = self.names
         pred_boxes, show_boxes = self.boxes, boxes
         pred_masks, show_masks = self.masks, masks
