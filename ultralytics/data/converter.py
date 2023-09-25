@@ -1,5 +1,6 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
+import os
 import json
 import shutil
 from collections import defaultdict
@@ -46,11 +47,12 @@ def coco80_to_coco91_class():  #
         64, 65, 67, 70, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 85, 86, 87, 88, 89, 90]
 
 
-def convert_coco(labels_dir='../coco/annotations/', use_segments=False, use_keypoints=False, cls91to80=True):
+def convert_coco(labels_dir='../coco/annotations/', save_dir='', use_segments=False, use_keypoints=False, cls91to80=True):
     """Converts COCO dataset annotations to a format suitable for training YOLOv5 models.
 
     Args:
         labels_dir (str, optional): Path to directory containing COCO dataset annotation files.
+        save_dir (str, optional): Path to directory for saving outputs.
         use_segments (bool, optional): Whether to include segmentation masks in the output.
         use_keypoints (bool, optional): Whether to include keypoint annotations in the output.
         cls91to80 (bool, optional): Whether to map 91 COCO class IDs to the corresponding 80 COCO class IDs.
@@ -67,7 +69,7 @@ def convert_coco(labels_dir='../coco/annotations/', use_segments=False, use_keyp
     """
 
     # Create dataset directory
-    save_dir = Path('yolo_labels')
+    save_dir = save_dir / Path('yolo_labels')
     if save_dir.exists():
         shutil.rmtree(save_dir)  # delete dir
     for p in save_dir / 'labels', save_dir / 'images':
@@ -78,8 +80,11 @@ def convert_coco(labels_dir='../coco/annotations/', use_segments=False, use_keyp
 
     # Import json
     for json_file in sorted(Path(labels_dir).resolve().glob('*.json')):
-        fn = Path(save_dir) / 'labels' / json_file.stem.replace('instances_', '')  # folder name
+        split = json_file.stem.replace('instances_', '')
+        fn = Path(save_dir) / 'labels' / split # folder name
+        fi = Path(save_dir) / 'images' / split  # folder name
         fn.mkdir(parents=True, exist_ok=True)
+        fi.mkdir(parents=True, exist_ok=True)
         with open(json_file) as f:
             data = json.load(f)
 
@@ -130,8 +135,11 @@ def convert_coco(labels_dir='../coco/annotations/', use_segments=False, use_keyp
                     keypoints.append(box + (np.array(ann['keypoints']).reshape(-1, 3) /
                                             np.array([w, h, 1])).reshape(-1).tolist())
 
-            # Write
-            with open((fn / f).with_suffix('.txt'), 'a') as file:
+            # Write images
+            os.system(f"ln -s {f} {fi / Path(str(f).replace('/', '_'))}")
+                
+            # Write labels
+            with open((fn / Path(str(f).replace('/', '_'))).with_suffix('.txt'), 'a') as file:
                 for i in range(len(bboxes)):
                     if use_keypoints:
                         line = *(keypoints[i]),  # cls, box, keypoints
