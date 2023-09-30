@@ -150,7 +150,7 @@ def var_boxes(boxes, idx_same_class_as_i):
     var_w = torch.var(x2 - x1, unbiased=True)
     var_h = torch.var(y2 - y1, unbiased=True)
     variances = torch.stack((var_x, var_y, var_w, var_h),-1)
-    return torch.zeros(4) if variances.isnan().all() else variances 
+    return torch.zeros(4, device=boxes.device) if variances.isnan().all() else variances 
 
 
 def calculate_iou(box, boxes): #TODO: consider ious from cython_bbox
