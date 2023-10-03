@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import torchvision
 
 from ultralytics.utils import LOGGER
-
+from cython_bbox import bbox_overlaps as bbox_ious
 
 class Profile(contextlib.ContextDecorator):
     """
@@ -210,7 +210,11 @@ def nms_with_variance(boxes, scores, classes, threshold):
         keep.append(i)
 
         # Calculate the intersection over union (IoU) between the current box and all other boxes.
-        ious = calculate_iou(boxes[i], boxes[other_indices])
+        # ious = calculate_iou(boxes[i], boxes[other_indices])
+        ious = bbox_ious(
+            np.ascontiguousarray(boxes[i][None,:].cpu(), dtype=np.float),
+            np.ascontiguousarray(boxes[other_indices].cpu(), dtype=np.float)
+        )
 
         # Compute variances of boxes with IoU > threshold.
         idx_high_iou_with_i = other_indices[ious > threshold]
