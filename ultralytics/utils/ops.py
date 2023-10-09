@@ -178,13 +178,12 @@ def calculate_iou(box, boxes): #TODO: consider ious from cython_bbox
     return iou
 
 
-def nms_with_variance(boxes, scores, classes, threshold):
+def nms_with_variance(boxes, scores, threshold):
     """
     Apply non-maximum suppression while estimating variance of strongly overlapping bounding boxes.
 
     Args:
         boxes (Tensor): Tensor of shape (N, 4) representing N bounding boxes in (x1, y1, x2, y2) format.
-        classes (Tensor): Tensor of shape (N,) representing class labels for each bounding box.
         scores (Tensor): Tensor of shape (N,) representing confidence scores for each bounding box.
         threshold (float): Threshold value to determine overlapping boxes.
 
@@ -200,7 +199,6 @@ def nms_with_variance(boxes, scores, classes, threshold):
 
     # Initialize an empty list to store the indices of the boxes to keep.
     keep, var_keep = [], []
-    det_cls = classes.squeeze().int()
 
     while len(indices) > 0:
         # Get the index of the highest confidence score box.
@@ -217,9 +215,7 @@ def nms_with_variance(boxes, scores, classes, threshold):
         )
 
         # Compute variances of boxes with IoU > threshold.
-        idx_high_iou_with_i = other_indices[ious > threshold]
-        same_cls = (det_cls[i] == det_cls[idx_high_iou_with_i])
-        var_keep.append(var_boxes(boxes, idx_high_iou_with_i[same_cls]))
+        var_keep.append(var_boxes(boxes, other_indices[ious > threshold]))
         
         # Keep indices of boxes with IoU <= threshold.
         indices = other_indices[ious <= threshold]
@@ -340,7 +336,7 @@ def non_max_suppression(
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
         # i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
-        i, vars_xi = nms_with_variance(boxes, scores, c, iou_thres) # Custom NMS
+        i, vars_xi = nms_with_variance(boxes, scores, iou_thres) # Custom NMS
         i = i[:max_det]  # limit detections
         vars_xi = vars_xi[:max_det]
 
