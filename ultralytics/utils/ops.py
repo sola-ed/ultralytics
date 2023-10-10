@@ -129,28 +129,29 @@ def make_divisible(x, divisor):
     return math.ceil(x / divisor) * divisor
 
 
-def var_boxes(boxes, idx_same_class_as_i):
+def var_boxes(boxes, scores, idx_high_iou_with_i):
     """
     Calculate the variance of bounding boxes strongly overlapping with the i-th one.
 
     Args:
         boxes (Tensor): Tensor of shape (N, 4) representing N bounding boxes in (x1, y1, x2, y2) format.
-        idx_same_class_as_i (Tensor): Tensor of shape (M,) with the indices of the strongly overlapping boxes.
+        idx_high_iou_with_i (Tensor): Tensor of shape (M,) with the indices of the strongly overlapping boxes.
 
     Returns:
         variances (Tensor): Tensor of shape (M,4) representing variances in (x, y, w, h) format.
     """
-    x1 = boxes[idx_same_class_as_i,0]
-    y1 = boxes[idx_same_class_as_i,1]
-    x2 = boxes[idx_same_class_as_i,2]
-    y2 = boxes[idx_same_class_as_i,3]
+    x1 = boxes[idx_high_iou_with_i, 0]
+    y1 = boxes[idx_high_iou_with_i, 1]
+    x2 = boxes[idx_high_iou_with_i, 2]
+    y2 = boxes[idx_high_iou_with_i, 3]
     # Get variances of boxes and scores
     var_x = torch.var(0.5*(x1 + x2), unbiased=True)
     var_y = torch.var(0.5*(y1 + y2), unbiased=True)
     var_w = torch.var(x2 - x1, unbiased=True)
     var_h = torch.var(y2 - y1, unbiased=True)
-    variances = torch.stack((var_x, var_y, var_w, var_h),-1)
-    return torch.zeros(4, device=boxes.device) if variances.isnan().all() else variances 
+    var_s = torch.var(scores[idx_high_iou_with_i], unbiased=True)
+    variances = torch.stack((var_x, var_y, var_w, var_h, var_s),-1)
+    return torch.zeros(5, device=boxes.device) if variances.isnan().all() else variances 
 
 
 def calculate_iou(box, boxes): #TODO: consider ious from cython_bbox
@@ -215,7 +216,7 @@ def nms_with_variance(boxes, scores, threshold):
         )
 
         # Compute variances of boxes with IoU > threshold.
-        var_keep.append(var_boxes(boxes, other_indices[ious > threshold]))
+        var_keep.append(var_boxes(boxes, scores, other_indices[ious > threshold]))
         
         # Keep indices of boxes with IoU <= threshold.
         indices = other_indices[ious <= threshold]
