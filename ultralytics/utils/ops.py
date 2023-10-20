@@ -211,12 +211,12 @@ def nms_with_variance(boxes, scores, threshold):
         # Calculate the intersection over union (IoU) between the current box and all other boxes.
         # ious = calculate_iou(boxes[i], boxes[other_indices])
         ious = bbox_ious(
-            np.ascontiguousarray(boxes[i][None,:].cpu(), dtype=np.float),
-            np.ascontiguousarray(boxes[other_indices].cpu(), dtype=np.float)
+            np.ascontiguousarray(boxes[i][None,:].cpu(), dtype=float),
+            np.ascontiguousarray(boxes[other_indices].cpu(), dtype=float)
         )
 
         # Compute variances of boxes with IoU > threshold.
-        var_keep.append(var_boxes(boxes, scores, other_indices[ious > threshold]))
+        var_keep.append(var_boxes(boxes, scores, torch.cat((i[None], other_indices[ious > threshold]))))
         
         # Keep indices of boxes with IoU <= threshold.
         indices = other_indices[ious <= threshold]
