@@ -216,7 +216,8 @@ def nms_with_variance(boxes, scores, threshold):
         )
 
         # Compute variances of boxes with IoU > threshold.
-        var_keep.append(var_boxes(boxes, scores, torch.cat((i[None], other_indices[ious > threshold]))))
+        var_keep.append(var_boxes(boxes, scores, other_indices[ious > threshold]))
+        # var_keep.append(var_boxes(boxes, scores, torch.cat((i[None], other_indices[ious > threshold]))))
         
         # Keep indices of boxes with IoU <= threshold.
         indices = other_indices[ious <= threshold]
