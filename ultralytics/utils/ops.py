@@ -12,7 +12,9 @@ import torch.nn.functional as F
 import torchvision
 
 from ultralytics.utils import LOGGER
-from cython_bbox import bbox_overlaps as bbox_ious
+
+from nms_with_variance import nms_with_variance
+
 
 class Profile(contextlib.ContextDecorator):
     """
@@ -129,102 +131,6 @@ def make_divisible(x, divisor):
     return math.ceil(x / divisor) * divisor
 
 
-def var_boxes(boxes, scores, idx_high_iou_with_i):
-    """
-    Calculate the variance of bounding boxes strongly overlapping with the i-th one.
-
-    Args:
-        boxes (Tensor): Tensor of shape (N, 4) representing N bounding boxes in (x1, y1, x2, y2) format.
-        idx_high_iou_with_i (Tensor): Tensor of shape (M,) with the indices of the strongly overlapping boxes.
-
-    Returns:
-        variances (Tensor): Tensor of shape (M,4) representing variances in (x, y, w, h) format.
-    """
-    x1 = boxes[idx_high_iou_with_i, 0]
-    y1 = boxes[idx_high_iou_with_i, 1]
-    x2 = boxes[idx_high_iou_with_i, 2]
-    y2 = boxes[idx_high_iou_with_i, 3]
-    # Get variances of boxes and scores
-    var_x = torch.var(0.5*(x1 + x2), unbiased=True)
-    var_y = torch.var(0.5*(y1 + y2), unbiased=True)
-    var_w = torch.var(x2 - x1, unbiased=True)
-    var_h = torch.var(y2 - y1, unbiased=True)
-    var_s = torch.var(scores[idx_high_iou_with_i], unbiased=True)
-    variances = torch.stack((var_x, var_y, var_w, var_h, var_s),-1)
-    return torch.zeros(5, device=boxes.device) if variances.isnan().all() else variances 
-
-
-def calculate_iou(box, boxes): #TODO: consider ious from cython_bbox
-    """
-    Calculate the Intersection over Union (IoU) between a box and a set of boxes.
-
-    Args:
-        box (Tensor): Tensor of shape (4,) representing a bounding box in (x1, y1, x2, y2) format.
-        boxes (Tensor): Tensor of shape (N, 4) representing N bounding boxes in (x1, y1, x2, y2) format.
-
-    Returns:
-        iou (Tensor): Tensor of shape (N,) representing IoU between the box and each of the N boxes.
-    """
-    x1 = torch.max(box[0], boxes[:, 0])
-    y1 = torch.max(box[1], boxes[:, 1])
-    x2 = torch.min(box[2], boxes[:, 2])
-    y2 = torch.min(box[3], boxes[:, 3])
-
-    intersection = torch.clamp(x2 - x1, min=0) * torch.clamp(y2 - y1, min=0)
-    area_box = (box[2] - box[0]) * (box[3] - box[1])
-    area_boxes = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
-    union = area_box + area_boxes - intersection
-
-    iou = intersection / union
-    return iou
-
-
-def nms_with_variance(boxes, scores, threshold):
-    """
-    Apply non-maximum suppression while estimating variance of strongly overlapping bounding boxes.
-
-    Args:
-        boxes (Tensor): Tensor of shape (N, 4) representing N bounding boxes in (x1, y1, x2, y2) format.
-        scores (Tensor): Tensor of shape (N,) representing confidence scores for each bounding box.
-        threshold (float): Threshold value to determine overlapping boxes.
-
-    Returns:
-        keep (Tensor): Index of the boxes to keep after NMS.
-        var_keep (Tensor): Tensor of shape (N, 4) representing variances in (x, y, w, h) format.
-    """
-    if len(boxes) == 0:
-        return torch.empty(0, dtype=torch.int64), torch.empty((0,4), dtype=torch.float)
-
-    # Sort the bounding boxes by their confidence scores in descending order.
-    _, indices = scores.sort(descending=True)
-
-    # Initialize an empty list to store the indices of the boxes to keep.
-    keep, var_keep = [], []
-
-    while len(indices) > 0:
-        # Get the index of the highest confidence score box.
-        i, other_indices = indices[0], indices[1:]
-
-        # Add the current box index to the list of boxes to keep.
-        keep.append(i)
-
-        # Calculate the intersection over union (IoU) between the current box and all other boxes.
-        # ious = calculate_iou(boxes[i], boxes[other_indices])
-        ious = bbox_ious(
-            np.ascontiguousarray(boxes[i][None,:].cpu(), dtype=float),
-            np.ascontiguousarray(boxes[other_indices].cpu(), dtype=float)
-        )
-
-        # Compute variances of boxes with IoU > threshold.
-        var_keep.append(var_boxes(boxes, scores, other_indices[ious > threshold]))
-        # var_keep.append(var_boxes(boxes, scores, torch.cat((i[None], other_indices[ious > threshold]))))
-        
-        # Keep indices of boxes with IoU <= threshold.
-        indices = other_indices[ious <= threshold]
-
-    return torch.tensor(keep, dtype=torch.int64), torch.stack(var_keep)
-
-
 def non_max_suppression(
         prediction,
         conf_thres=0.25,
@@ -338,7 +244,7 @@ def non_max_suppression(
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
         # i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
-        i, vars_xi = nms_with_variance(boxes, scores, iou_thres) # Custom NMS
+        i, vars_xi = nms_with_variance(boxes, scores, iou_thres, top_k=max_det) # Custom NMS
         i = i[:max_det]  # limit detections
         vars_xi = vars_xi[:max_det]
 
