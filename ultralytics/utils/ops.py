@@ -13,7 +13,7 @@ import torchvision
 
 from ultralytics.utils import LOGGER
 
-from nms_with_variance import nms_with_variance
+import nms_var
 
 
 class Profile(contextlib.ContextDecorator):
@@ -244,7 +244,7 @@ def non_max_suppression(
         c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
         # i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
-        i, vars_xi = nms_with_variance(boxes, scores, iou_thres, top_k=max_det) # Custom NMS
+        i, vars_xi = nms_var.nms(boxes, scores, iou_thres, top_k=max_det) # Custom NMS
         i = i[:max_det]  # limit detections
         vars_xi = vars_xi[:max_det]
 
