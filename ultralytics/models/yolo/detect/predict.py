@@ -38,7 +38,7 @@ class DetectionPredictor(BasePredictor):
         for i, (pred, var_pred) in enumerate(zip(preds, var_preds)):
             orig_img = orig_imgs[i]
             # pred[:, :4] = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape)
-            pred[:, :4], var_pred = ops.scale_boxes(img.shape[2:], pred[:, :4], var_pred, orig_img.shape)
+            pred[:, :4], var_pred = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape, var_boxes=var_pred)
             img_path = self.batch[0][i]
             # results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=pred))
             results.append(Results(orig_img, path=img_path, names=self.model.names, boxes=pred, var_boxes=var_pred))

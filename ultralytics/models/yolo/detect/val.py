@@ -89,7 +89,8 @@ class DetectionValidator(BaseValidator):
 
     def update_metrics(self, preds, batch):
         """Metrics."""
-        for si, pred in enumerate(preds):
+        # for si, pred in enumerate(preds):
+        for si, (pred, _) in enumerate(zip(*preds)):
             idx = batch['batch_idx'] == si
             cls = batch['cls'][idx]
             bbox = batch['bboxes'][idx]
